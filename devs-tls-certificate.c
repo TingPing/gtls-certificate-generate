@@ -237,3 +237,54 @@ devs_tls_certificate_new_generate_finish (GAsyncResult  *result,
 
   return g_task_propagate_pointer (G_TASK (result), error);
 }
+
+GTlsCertificate *
+devs_tls_certificate_new_generate (GFile         *public_key_file,
+                                   GFile         *private_key_file,
+                                   const gchar   *c,
+                                   const gchar   *cn,
+                                   GCancellable  *cancellable,
+                                   GError       **error)
+{
+  g_autoptr(GTask) task = NULL;
+  GenerateData *data;
+
+  g_return_val_if_fail (G_IS_FILE (public_key_file), NULL);
+  g_return_val_if_fail (G_IS_FILE (private_key_file), NULL);
+  g_return_val_if_fail (c != NULL, NULL);
+  g_return_val_if_fail (cn != NULL, NULL);
+  g_return_val_if_fail (!cancellable || G_IS_CANCELLABLE (cancellable), NULL);
+
+  if (g_file_equal (public_key_file, private_key_file))
+    {
+      g_set_error_literal (error,
+                           G_IO_ERROR,
+                           G_IO_ERROR_NOT_REGULAR_FILE,
+                           "Public and private key files may not be the same");
+      return NULL;
+    }
+
+  if (!g_file_is_native (public_key_file) ||
+      !g_file_is_native (private_key_file))
+    {
+      g_set_error_literal (error,
+                           G_IO_ERROR,
+                           G_IO_ERROR_NOT_REGULAR_FILE,
+                           "Destination files are non-native and cannot be used");
+      return NULL;
+    }
+
+  task = g_task_new (NULL, cancellable, NULL, NULL);
+  g_task_set_source_tag (task, devs_tls_certificate_new_generate);
+
+  data = g_slice_new0 (GenerateData);
+  data->public_key_path = g_file_get_path (public_key_file);
+  data->private_key_path = g_file_get_path (private_key_file);
+  data->c = g_strdup (c);
+  data->cn = g_strdup (cn);
+  g_task_set_task_data (task, data, (GDestroyNotify)generate_data_free);
+
+  devs_tls_certificate_generate_worker (task, NULL, data, cancellable);
+
+  return g_task_propagate_pointer (task, error);
+}
