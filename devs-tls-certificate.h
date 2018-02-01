@@ -24,14 +24,14 @@
 
 G_BEGIN_DECLS
 
-GTlsCertificate *devs_tls_certificate_new_generate        (GFile                *public_key_file,
-                                                           GFile                *private_key_file,
+GTlsCertificate *devs_tls_certificate_new_generate        (const gchar          *public_key_path,
+                                                           const gchar          *private_key_path,
                                                            const gchar          *c,
                                                            const gchar          *cn,
                                                            GCancellable         *cancellable,
                                                            GError              **error);
-void             devs_tls_certificate_new_generate_async  (GFile                *public_key_file,
-                                                           GFile                *private_key_file,
+void             devs_tls_certificate_new_generate_async  (const gchar          *public_key_path,
+                                                           const gchar          *private_key_path,
                                                            const gchar          *c,
                                                            const gchar          *cn,
                                                            GCancellable         *cancellable,

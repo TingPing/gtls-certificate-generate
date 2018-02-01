@@ -180,8 +180,8 @@ failure:
 }
 
 void
-devs_tls_certificate_new_generate_async (GFile               *public_key_file,
-                                         GFile               *private_key_file,
+devs_tls_certificate_new_generate_async (const gchar         *public_key_path,
+                                         const gchar         *private_key_path,
                                          const gchar         *c,
                                          const gchar         *cn,
                                          GCancellable        *cancellable,
@@ -191,8 +191,8 @@ devs_tls_certificate_new_generate_async (GFile               *public_key_file,
   g_autoptr(GTask) task = NULL;
   GenerateData *data;
 
-  g_return_if_fail (G_IS_FILE (public_key_file));
-  g_return_if_fail (G_IS_FILE (private_key_file));
+  g_return_if_fail (public_key_path != NULL);
+  g_return_if_fail (private_key_path != NULL);
   g_return_if_fail (c != NULL);
   g_return_if_fail (cn != NULL);
   g_return_if_fail (!cancellable || G_IS_CANCELLABLE (cancellable));
@@ -200,28 +200,9 @@ devs_tls_certificate_new_generate_async (GFile               *public_key_file,
   task = g_task_new (NULL, cancellable, callback, user_data);
   g_task_set_source_tag (task, devs_tls_certificate_new_generate_async);
 
-  if (g_file_equal (public_key_file, private_key_file))
-    {
-      g_task_return_new_error (task,
-                               G_IO_ERROR,
-                               G_IO_ERROR_NOT_REGULAR_FILE,
-                               "Public and private key files may not be the same");
-      return;
-    }
-
-  if (!g_file_is_native (public_key_file) ||
-      !g_file_is_native (private_key_file))
-    {
-      g_task_return_new_error (task,
-                               G_IO_ERROR,
-                               G_IO_ERROR_NOT_REGULAR_FILE,
-                               "Destination files are non-native and cannot be used");
-      return;
-    }
-
   data = g_slice_new0 (GenerateData);
-  data->public_key_path = g_file_get_path (public_key_file);
-  data->private_key_path = g_file_get_path (private_key_file);
+  data->public_key_path = g_strdup (public_key_path);
+  data->private_key_path = g_strdup (private_key_path);
   data->c = g_strdup (c);
   data->cn = g_strdup (cn);
   g_task_set_task_data (task, data, (GDestroyNotify)generate_data_free);
@@ -239,8 +220,8 @@ devs_tls_certificate_new_generate_finish (GAsyncResult  *result,
 }
 
 GTlsCertificate *
-devs_tls_certificate_new_generate (GFile         *public_key_file,
-                                   GFile         *private_key_file,
+devs_tls_certificate_new_generate (const gchar   *public_key_path,
+                                   const gchar   *private_key_path,
                                    const gchar   *c,
                                    const gchar   *cn,
                                    GCancellable  *cancellable,
@@ -249,37 +230,18 @@ devs_tls_certificate_new_generate (GFile         *public_key_file,
   g_autoptr(GTask) task = NULL;
   GenerateData *data;
 
-  g_return_val_if_fail (G_IS_FILE (public_key_file), NULL);
-  g_return_val_if_fail (G_IS_FILE (private_key_file), NULL);
+  g_return_val_if_fail (public_key_path != NULL, NULL);
+  g_return_val_if_fail (private_key_path != NULL, NULL);
   g_return_val_if_fail (c != NULL, NULL);
   g_return_val_if_fail (cn != NULL, NULL);
   g_return_val_if_fail (!cancellable || G_IS_CANCELLABLE (cancellable), NULL);
-
-  if (g_file_equal (public_key_file, private_key_file))
-    {
-      g_set_error_literal (error,
-                           G_IO_ERROR,
-                           G_IO_ERROR_NOT_REGULAR_FILE,
-                           "Public and private key files may not be the same");
-      return NULL;
-    }
-
-  if (!g_file_is_native (public_key_file) ||
-      !g_file_is_native (private_key_file))
-    {
-      g_set_error_literal (error,
-                           G_IO_ERROR,
-                           G_IO_ERROR_NOT_REGULAR_FILE,
-                           "Destination files are non-native and cannot be used");
-      return NULL;
-    }
 
   task = g_task_new (NULL, cancellable, NULL, NULL);
   g_task_set_source_tag (task, devs_tls_certificate_new_generate);
 
   data = g_slice_new0 (GenerateData);
-  data->public_key_path = g_file_get_path (public_key_file);
-  data->private_key_path = g_file_get_path (private_key_file);
+  data->public_key_path = g_strdup (public_key_path);
+  data->private_key_path = g_strdup (private_key_path);
   data->c = g_strdup (c);
   data->cn = g_strdup (cn);
   g_task_set_task_data (task, data, (GDestroyNotify)generate_data_free);
