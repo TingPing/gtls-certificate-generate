@@ -193,15 +193,31 @@ devs_tls_certificate_new_generate_async (GFile               *public_key_file,
 
   g_return_if_fail (G_IS_FILE (public_key_file));
   g_return_if_fail (G_IS_FILE (private_key_file));
-  g_return_if_fail (!g_file_equal (public_key_file, private_key_file));
-  g_return_if_fail (g_file_is_native (public_key_file));
-  g_return_if_fail (g_file_is_native (private_key_file));
   g_return_if_fail (c != NULL);
   g_return_if_fail (cn != NULL);
   g_return_if_fail (!cancellable || G_IS_CANCELLABLE (cancellable));
 
   task = g_task_new (NULL, cancellable, callback, user_data);
   g_task_set_source_tag (task, devs_tls_certificate_new_generate_async);
+
+  if (g_file_equal (public_key_file, private_key_file))
+    {
+      g_task_return_new_error (task,
+                               G_IO_ERROR,
+                               G_IO_ERROR_NOT_REGULAR_FILE,
+                               "Public and private key files may not be the same");
+      return;
+    }
+
+  if (!g_file_is_native (public_key_file) ||
+      !g_file_is_native (private_key_file))
+    {
+      g_task_return_new_error (task,
+                               G_IO_ERROR,
+                               G_IO_ERROR_NOT_REGULAR_FILE,
+                               "Destination files are non-native and cannot be used");
+      return;
+    }
 
   data = g_slice_new0 (GenerateData);
   data->public_key_path = g_file_get_path (public_key_file);
