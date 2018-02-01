@@ -96,6 +96,8 @@ devs_tls_certificate_generate_worker (GTask        *task,
   g_assert (data != NULL);
   g_assert (data->public_key_path != NULL);
   g_assert (data->private_key_path != NULL);
+  g_assert (data->c != NULL);
+  g_assert (data->cn != NULL);
 
   if (!make_directory_parent (data->public_key_path, &error) ||
       !make_directory_parent (data->private_key_path, &error))
