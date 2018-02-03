@@ -21,17 +21,36 @@
 #include "devs-tls-certificate.h"
 
 #include <errno.h>
-#include <openssl/bio.h>
-#include <openssl/pem.h>
-#include <openssl/x509.h>
+#include <string.h>
+#include <glib/gstdio.h>
+#include <gnutls/x509.h>
 
 #define DEFAULT_KEY_SIZE 4096
 
-G_DEFINE_AUTOPTR_CLEANUP_FUNC (BIGNUM, BN_free)
-G_DEFINE_AUTOPTR_CLEANUP_FUNC (EVP_PKEY, EVP_PKEY_free)
-G_DEFINE_AUTOPTR_CLEANUP_FUNC (X509, X509_free)
-G_DEFINE_AUTOPTR_CLEANUP_FUNC (RSA, RSA_free)
-G_DEFINE_AUTOPTR_CLEANUP_FUNC (BIO, BIO_free)
+static void
+_gnutls_datum_clear (gnutls_datum_t *datum)
+{
+  if (datum->data != NULL)
+    gnutls_free (datum->data);
+}
+
+static void
+_gnutls_crt_free (gnutls_x509_crt_t *cert)
+{
+  if (cert != NULL)
+    gnutls_x509_crt_deinit (*cert);
+}
+
+static void
+_gnutls_privkey_free (gnutls_x509_privkey_t *privkey)
+{
+  if (privkey != NULL)
+    gnutls_x509_privkey_deinit (*privkey);
+}
+
+G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC(gnutls_datum_t, _gnutls_datum_clear)
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(gnutls_x509_crt_t, _gnutls_crt_free)
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(gnutls_x509_privkey_t, _gnutls_privkey_free)
 
 typedef struct
 {
@@ -83,13 +102,14 @@ devs_tls_certificate_generate_worker (GTask        *task,
   GenerateData *data = task_data;
   g_autoptr(GTlsCertificate) certificate = NULL;
   g_autoptr(GError) error = NULL;
-  g_autoptr(EVP_PKEY) pk  = NULL;
-  g_autoptr(BIGNUM) bne = NULL;
-  g_autoptr(X509) x = NULL;
-  g_autoptr(RSA) rsa = NULL;
-  g_autoptr(BIO) pubkey = NULL;
-  g_autoptr(BIO) privkey = NULL;
-  X509_NAME *name;
+  g_autoptr(gnutls_x509_crt_t) certptr = NULL;
+  g_autoptr(gnutls_x509_privkey_t) privkeyptr = NULL;
+  g_auto(gnutls_datum_t) pubkey_data = { 0 };
+  g_auto(gnutls_datum_t) privkey_data = { 0 };
+  g_autofree char *dn = NULL;
+  int gtlsret = 0;
+  gnutls_x509_crt_t cert;
+  gnutls_x509_privkey_t privkey;
 
   g_assert (G_IS_TASK (task));
   g_assert (source_object == NULL);
@@ -106,58 +126,36 @@ devs_tls_certificate_generate_worker (GTask        *task,
       return;
     }
 
-  pk = EVP_PKEY_new ();
-  if (pk == NULL)
-    goto failure;
+#define HANDLE_FAILURE(x) G_STMT_START {\
+  gtlsret = x; \
+  if (gtlsret != GNUTLS_E_SUCCESS) \
+    goto failure; \
+} G_STMT_END
 
-  x = X509_new ();
-  if (x == NULL)
-    goto failure;
-
-  bne = BN_new ();
-  if (bne == NULL || !BN_set_word (bne, RSA_F4))
-    goto failure;
-
-  rsa = RSA_new ();
-  if (rsa == NULL || !RSA_generate_key_ex (rsa, DEFAULT_KEY_SIZE, bne, NULL))
-    goto failure;
-
-  if (!EVP_PKEY_assign_RSA (pk, g_steal_pointer (&rsa)))
-    goto failure;
-
-  X509_set_version (x, 2);
-  ASN1_INTEGER_set (X509_get_serialNumber (x), 0);
-  X509_gmtime_adj (X509_get_notBefore (x), 0);
+  HANDLE_FAILURE(gnutls_x509_crt_init (&cert));
+  certptr = &cert;
+  HANDLE_FAILURE(gnutls_x509_crt_set_version (cert, 3));
+  HANDLE_FAILURE(gnutls_x509_crt_set_serial (cert, "\x00", 1));
+  HANDLE_FAILURE(gnutls_x509_crt_set_activation_time (cert, time (NULL)));
+  dn = g_strdup_printf ("C=%s,CN=%s", data->c, data->cn);
+  HANDLE_FAILURE(gnutls_x509_crt_set_dn (cert, dn, NULL));
   /* 5 years. We'll figure out key rotation in that time... */
-  X509_gmtime_adj (X509_get_notAfter (x), (long)60*60*24*5*365);
-  X509_set_pubkey (x, pk);
+  HANDLE_FAILURE(gnutls_x509_crt_set_expiration_time (cert, time (NULL) + (60*60*24*5*365)));
 
-  name = X509_get_subject_name (x);
+  HANDLE_FAILURE(gnutls_x509_privkey_init (&privkey));
+  privkeyptr = &privkey;
+  HANDLE_FAILURE(gnutls_x509_privkey_generate (privkey, GNUTLS_PK_RSA, DEFAULT_KEY_SIZE, 0));
+  HANDLE_FAILURE(gnutls_x509_crt_set_key (cert, privkey));
 
-  if (!X509_NAME_add_entry_by_txt (name, "C",
-                                   MBSTRING_ASC, (guchar *)data->c, -1, -1, 0))
+  HANDLE_FAILURE(gnutls_x509_crt_sign (cert, cert, privkey));
+
+  HANDLE_FAILURE(gnutls_x509_crt_export2 (cert, GNUTLS_X509_FMT_PEM, &pubkey_data));
+  if (!g_file_set_contents(data->public_key_path, (char*)pubkey_data.data, pubkey_data.size, &error))
     goto failure;
 
-  if (!X509_NAME_add_entry_by_txt (name, "CN",
-                                   MBSTRING_ASC, (guchar *)data->cn, -1, -1, 0))
+  HANDLE_FAILURE(gnutls_x509_privkey_export2 (privkey, GNUTLS_X509_FMT_PEM, &privkey_data));
+  if (!g_file_set_contents(data->private_key_path, (char*)privkey_data.data, privkey_data.size, &error))
     goto failure;
-
-  if (!X509_set_issuer_name (x, name))
-    goto failure;
-
-  if (!X509_sign (x, pk, EVP_md5 ()))
-    goto failure;
-
-  pubkey = BIO_new_file (data->public_key_path, "w+");
-  if (pubkey == NULL || !PEM_write_bio_X509 (pubkey, x))
-    goto failure;
-
-  privkey = BIO_new_file (data->private_key_path, "w+");
-  if (privkey == NULL || !PEM_write_bio_PrivateKey (privkey, pk, NULL, NULL, 0, NULL, NULL))
-    goto failure;
-
-  BIO_flush (pubkey);
-  BIO_flush (privkey);
 
   certificate = g_tls_certificate_new_from_files (data->public_key_path,
                                                   data->private_key_path,
@@ -172,6 +170,14 @@ devs_tls_certificate_generate_worker (GTask        *task,
 failure:
   if (error != NULL)
     g_task_return_error (task, g_steal_pointer (&error));
+  else if (gtlsret != 0)
+    {
+      g_autofree char *errstring = g_strdup_printf ("GnuTLS Error: %s", gnutls_strerror (gtlsret));
+      g_task_return_new_error (task,
+                               G_IO_ERROR,
+                               G_IO_ERROR_FAILED,
+                               errstring);
+    }
   else
     g_task_return_new_error (task,
                              G_IO_ERROR,

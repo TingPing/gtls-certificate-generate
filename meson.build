@@ -5,6 +5,6 @@ executable('tls-certificate-gen',
   'main.c',
   dependencies: [
     dependency('gio-2.0'),
-    dependency('openssl')
+    dependency('gnutls')
   ]
 )
